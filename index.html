@@ -1104,25 +1104,58 @@ function analyzeSuggestions(){
       (byExercise[exId] = byExercise[exId]||[]).push({date:s.date, vol:vol});
     });
   });
-  var stagnant = [];
+  // Stagnation streak = how many most-recent sessions in a row failed to beat the
+  // one before them (0 if the last session was itself a new high). This is more
+  // precise than a fixed "last 3" window and lets us tell generalized fatigue
+  // (many exercises stuck at once) apart from one lift needing a tweak.
+  var STAG_FLAG = 3, STAG_DELOAD = 5, GENERALIZED_COUNT = 3;
+  var stagList = [];
   Object.keys(byExercise).forEach(function(exId){
     var arr = byExercise[exId].sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
-    if(arr.length<3) return;
-    var last3 = arr.slice(-3);
-    var everIncreased = last3[1].vol>last3[0].vol || last3[2].vol>last3[1].vol;
-    if(!everIncreased && last3[2].vol<=last3[0].vol) stagnant.push(EXERCISES[exId].name);
-  });
-  if(stagnant.length){
-    var stagnantText = stagnant.join(", ")+" — volumul nu a crescut în ultimele 3 antrenamente.";
-    var causes = [];
-    if(avgSleep!==null && avgSleep<7) causes.push("ai dormit în medie doar "+avgSleep.toFixed(1)+"h/noapte");
-    if(proteinPerKg!==null && proteinPerKg<1.6) causes.push("ai luat doar ~"+proteinPerKg.toFixed(1)+"g proteină/kg");
-    if(causes.length){
-      stagnantText += " Posibil legat de recuperare: "+causes.join(" și ")+" în aceeași perioadă.";
-    } else {
-      stagnantText += " Verifică odihna și somnul, sau încearcă un rep în plus data viitoare.";
+    if(arr.length<2) return;
+    var streak = 0;
+    for(var i=arr.length-1;i>0;i--){
+      if(arr[i].vol > arr[i-1].vol) break;
+      streak++;
     }
-    insights.push({type:"warn", title:"Exerciții fără progres recent", text: stagnantText});
+    if(streak >= STAG_FLAG) stagList.push({exId:exId, name:EXERCISES[exId].name, streak:streak});
+  });
+  stagList.sort(function(a,b){ return b.streak-a.streak; });
+
+  if(stagList.length){
+    var causes = [];
+    if(avgSleep!==null && avgSleep<7) causes.push("dormi în medie doar "+avgSleep.toFixed(1)+"h/noapte");
+    if(proteinPerKg!==null && proteinPerKg<1.6) causes.push("iei doar ~"+proteinPerKg.toFixed(1)+"g proteină/kg");
+    var causeText = causes.length ? " Posibil legat și de recuperare: "+causes.join(" și ")+"." : "";
+
+    var generalized = stagList.length >= GENERALIZED_COUNT;
+    var anyDeload = stagList.some(function(s){ return s.streak>=STAG_DELOAD; });
+    var title, text;
+    var listWithStreaks = stagList.map(function(s){ return s.name+" ("+s.streak+")"; }).join(", ");
+
+    if(generalized && anyDeload){
+      title = "Stagnare generalizată — ia în calcul un deload";
+      text = stagList.length+" exerciții nu au mai progresat de mai multe antrenamente: "+listWithStreaks+". "
+        +"Când stagnarea apare simultan pe mai multe exerciții, de obicei nu e o problemă de tehnică izolată, ci semn de recuperare insuficientă. "
+        +"Ia în calcul o săptămână de deload (aceleași exerciții, dar cu ~10-20% mai puțină greutate sau un set în minus), apoi reia progresia."+causeText;
+    } else if(generalized){
+      var minStreak = stagList[stagList.length-1].streak, maxStreak = stagList[0].streak;
+      var rangeText = minStreak===maxStreak ? maxStreak+" antrenamente" : minStreak+"-"+maxStreak+" antrenamente";
+      title = "Mai multe exerciții încep să stagneze";
+      text = stagList.length+" exerciții nu au mai crescut de "+rangeText+": "+listWithStreaks+". "
+        +"Încă nu e cazul de deload, dar ține sub observație — dacă tendința continuă câteva antrenamente, ia în calcul o săptămână mai ușoară."+causeText;
+    } else if(anyDeload){
+      var deloadOnes = stagList.filter(function(s){ return s.streak>=STAG_DELOAD; });
+      title = "Stagnare izolată, de durată";
+      text = deloadOnes.map(function(s){ return s.name+" ("+s.streak+" antrenamente)"; }).join(", ")
+        +" nu mai progresează de o vreme, dar restul antrenamentului arată bine — probabil nu e vorba de recuperare generală. "
+        +"Încearcă ceva punctual: schimbă ordinea în antrenament (fă-l primul, cât ești odihnit), tempo-ul, sau intervalul de repetări.";
+    } else {
+      title = "Exerciții fără progres recent";
+      text = stagList.map(function(s){ return s.name; }).join(", ")+" nu au mai crescut în volum de "+stagList[0].streak+" antrenamente."
+        +(causeText || " Verifică odihna și somnul, sau încearcă un rep în plus data viitoare.");
+    }
+    insights.push({type:"warn", title:title, text:text});
   }
 
   var subCount = {};
