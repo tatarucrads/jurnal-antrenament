@@ -656,16 +656,6 @@ function renderHome(){
     var d = dayById[state.draft.dayId];
     html += '<div class="resume-banner"><div><strong>Antrenament în desfășurare</strong>'+d.name+' · '+d.groups+'</div><button class="btn btn-primary" onclick="App.resume()">Continuă</button></div>';
   }
-  var hasAnyLoggedData = state.sessions.length>0 || Object.keys(state.dailyLogs).some(function(dk){ var l=state.dailyLogs[dk]; return l.weight||l.sleepHours||l.protein; });
-  if(!hasAnyLoggedData){
-    html += '<div class="backup-banner"><div><strong>Ai mai folosit aplicația?</strong><br>'
-      +'Dacă ai un backup salvat, importă-l din Setări înainte să adaugi date noi — altfel pleci de la zero.</div>'
-      +'<button class="btn" onclick="App.setView(\'settings\')">Setări</button></div>';
-  } else if(hasUnbackedChanges()){
-    html += '<div class="backup-banner"><div><strong>Fă un backup acum</strong><br>'
-      +'Ai date noi nesalvate încă. Dacă închizi aplicația fără backup, riști să le pierzi.</div>'
-      +'<button class="btn btn-primary" onclick="App.exportData()">Exportă</button></div>';
-  }
   html += '<div class="day-list">';
   DAYS.forEach(function(d, idx){
     var sessions = state.sessions.filter(function(s){ return s.dayId===d.id; }).sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
