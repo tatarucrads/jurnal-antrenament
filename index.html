@@ -656,6 +656,11 @@ function renderHome(){
     var d = dayById[state.draft.dayId];
     html += '<div class="resume-banner"><div><strong>Antrenament în desfășurare</strong>'+d.name+' · '+d.groups+'</div><button class="btn btn-primary" onclick="App.resume()">Continuă</button></div>';
   }
+  if(hasUnbackedChanges()){
+    html += '<div class="backup-banner"><div><strong>Fă un backup acum</strong><br>'
+      +'Ai date noi nesalvate încă. Dacă închizi aplicația fără backup, riști să le pierzi.</div>'
+      +'<button class="btn btn-primary" onclick="App.exportData()">Exportă</button></div>';
+  }
   html += '<div class="day-list">';
   DAYS.forEach(function(d, idx){
     var sessions = state.sessions.filter(function(s){ return s.dayId===d.id; }).sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
@@ -1338,18 +1343,32 @@ var App = {
     var json = JSON.stringify(state, null, 2);
     var filename = "jurnal-antrenament-backup-"+new Date().toISOString().slice(0,10)+".json";
     function markSaved(){ state.settings.lastBackupAt = todayIso(); saveState(); render(); }
-    if(window.claude && window.claude.downloads){
-      window.claude.downloads.save({filename:filename, data:json}).then(markSaved).catch(function(err){
-        showAlert("Backup-ul nu s-a salvat: "+(err && err.message ? err.message : "încearcă din nou"));
-      });
-    } else {
-      var blob = new Blob([json], {type:"application/json"});
+    function downloadBlob(){
+      var blob = new Blob([json], {type:"application/octet-stream"});
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url; a.download = filename;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
       markSaved();
+    }
+    if(window.claude && window.claude.downloads){
+      window.claude.downloads.save({filename:filename, data:json}).then(markSaved).catch(function(err){
+        showAlert("Backup-ul nu s-a salvat: "+(err && err.message ? err.message : "încearcă din nou"));
+      });
+      return;
+    }
+    // Plain <a download> links are unreliable for JSON on iOS Safari — they can silently
+    // display the content instead of saving a file. The native share sheet (with an explicit
+    // "Save to Files" option) is the reliable path on iOS; fall back to a forced download elsewhere.
+    var file = new File([json], filename, {type:"application/json"});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      navigator.share({files:[file], title:filename}).then(markSaved).catch(function(err){
+        if(err && err.name==="AbortError") return;
+        downloadBlob();
+      });
+    } else {
+      downloadBlob();
     }
   },
   importData: function(file){
