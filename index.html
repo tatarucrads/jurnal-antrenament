@@ -1231,6 +1231,7 @@ function renderTabbar(){
   return '<div class="tabbar">'+tab("home","🏠","Acasă")+tab("daily","⚖️","Corp")+tab("history","📖","Istoric")+tab("suggestions","💡","Sugestii")+tab("settings","⚙️","Setări")+'</div>';
 }
 
+var lastScrollKey = null;
 function render(){
   var app = document.getElementById("app");
   var html = "";
@@ -1245,7 +1246,12 @@ function render(){
   if(view==="home" || view==="daily" || view==="history" || view==="suggestions" || view==="settings"){
     app.innerHTML += renderTabbar();
   }
-  window.scrollTo(0,0);
+  // Only jump to top when the logical page actually changed — re-rendering the same
+  // page after an in-place edit (e.g. leaving an input field) must not move the scroll,
+  // or it steals focus from whatever the user tapped next.
+  var scrollKey = view+":"+(historyDetailId||"");
+  if(scrollKey !== lastScrollKey) window.scrollTo(0,0);
+  lastScrollKey = scrollKey;
 }
 
 var App = {
@@ -1279,8 +1285,12 @@ var App = {
     touch(); saveState(); render();
   },
   updateSet: function(exId, idx, field, val){
+    // No render() here on purpose: rebuilding the page while a field loses focus
+    // (moving to the next box) destroys the very input the user just tapped into.
+    // The exercise card's progress color only needs to catch up on the next real
+    // navigation (toggling a card, finishing the workout, switching tabs).
     state.draft.entries[exId].sets[idx][field] = val;
-    saveState(); render();
+    saveState();
   },
   updateDone: function(exId, checked){
     state.draft.entries[exId].done = checked;
