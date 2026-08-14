@@ -753,6 +753,22 @@ function renderSession(){
   return html;
 }
 
+// Epley formula: rough estimate of a 1-rep max from a weight×reps set. Used to judge
+// progress by strength rather than raw volume, so "heavier weight, fewer reps" reads
+// as the improvement it usually is instead of a drop.
+function estimated1RM(weight, reps){ return weight * (1 + reps/30); }
+function maxE1RM(sets){
+  var best = 0;
+  sets.forEach(function(s){
+    var w = parseFloat(s.weight), r = parseFloat(s.reps);
+    if(isFinite(w) && isFinite(r) && r>0){
+      var e = estimated1RM(w,r);
+      if(e>best) best = e;
+    }
+  });
+  return best;
+}
+
 function computeSummaryAndSave(){
   var draft = state.draft;
   var d = dayById[draft.dayId];
@@ -779,15 +795,20 @@ function computeSummaryAndSave(){
     var prev = lastEntryFor(exId, null);
     var vol = entry.sets.reduce(function(sum,s){ var w=parseFloat(s.weight), r=parseFloat(s.reps); return sum + (isFinite(w)&&isFinite(r) ? w*r : 0); },0);
     var prevVol = prev ? prev.entry.sets.reduce(function(sum,s){ var w=parseFloat(s.weight), r=parseFloat(s.reps); return sum + (isFinite(w)&&isFinite(r) ? w*r : 0); },0) : null;
+    // Progress is judged on estimated strength (best set's e1RM, Epley formula), not raw
+    // volume — a heavier weight for fewer reps is often equal-or-better progress, and
+    // pure weight*reps volume wrongly scores that as a regression.
+    var e1rm = maxE1RM(entry.sets);
+    var prevE1rm = prev ? maxE1RM(prev.entry.sets) : null;
 
     var kind = "new";
     if(prev !== null){
-      if(vol > prevVol){ kind="up"; improved++; }
-      else if(vol < prevVol){ kind="down"; declined++; }
+      if(e1rm > prevE1rm + 0.05){ kind="up"; improved++; }
+      else if(e1rm < prevE1rm - 0.05){ kind="down"; declined++; }
       else { kind="flat"; same++; }
     } else { newCount++; }
 
-    results.push({exId:exId, name:ex.name, kind:kind, vol:vol, prevVol:prevVol});
+    results.push({exId:exId, name:ex.name, kind:kind, vol:vol, prevVol:prevVol, e1rm:e1rm, prevE1rm:prevE1rm});
 
     // --- streak / weight-increase logic ---
     // Criterion: both "greutate maximă" sets (index 2,3) at same weight, reps >= threshold,
@@ -847,11 +868,11 @@ function renderSummary(){
       ? "Primul tău antrenament înregistrat pentru ziua asta ("+s.newCount+" "+exWord(s.newCount)+" noi). De acum încolo îți arăt progresul față de fiecare sesiune anterioară."
       : "Nu am nimic de comparat încă.";
   } else if(s.improved >= s.declined && s.improved>0){
-    paragraph = "Progres bun: volumul a crescut la "+s.improved+" din "+comparable+" "+exWord(comparable, true)+". Continuă în același ritm și ai grijă la exercițiile rămase neschimbate.";
+    paragraph = "Progres bun: forța estimată a crescut la "+s.improved+" din "+comparable+" "+exWord(comparable, true)+". Continuă în același ritm și ai grijă la exercițiile rămase neschimbate.";
   } else if(s.declined > s.improved){
     paragraph = "Antrenament sub nivelul anterior la "+s.declined+" din "+comparable+" "+exWord(comparable)+". Poate fi oboseală, somn sau recuperare — nu schimba greutățile, doar concentrează-te pe execuție data viitoare.";
   } else {
-    paragraph = "Antrenament stabil, fără schimbări majore de volum la "+comparable+" "+exWord(comparable, true)+". Solid, dar caută un mic progres data viitoare — un rep în plus e suficient.";
+    paragraph = "Antrenament stabil, fără schimbări majore de forță la "+comparable+" "+exWord(comparable, true)+". Solid, dar caută un mic progres data viitoare — un rep în plus e suficient.";
   }
 
   html += '<div class="summary-hero"><div class="duration-badge">⏱ '+fmtDuration(s.durationMin)+'</div><p>'+paragraph+'</p><div class="summary-stats">'
@@ -874,9 +895,9 @@ function renderSummary(){
       if(r.kind==="new"){
         evHtml = '<span class="pill pill-new">nou</span>';
       } else {
-        var diff = r.vol - r.prevVol;
+        var diff = r.e1rm - r.prevE1rm;
         var sign = diff>0 ? "+" : "";
-        evHtml = '<span class="'+(diff<0?'neg':'')+'"><b>'+sign+Math.round(diff)+'</b> vol.</span>';
+        evHtml = '<span class="'+(diff<0?'neg':'')+'"><b>'+sign+Math.round(diff)+'kg</b> 1RM est.</span>';
       }
       html += '<div class="delta-row"><div class="en">'+r.name+'</div><div class="ev num">'+evHtml+'</div></div>';
     });
@@ -1062,10 +1083,18 @@ function analyzeSuggestions(){
   var cutoff = new Date(Date.now() - 14*24*3600*1000);
   var recentReal = real.filter(function(s){ return new Date(s.date) >= cutoff; });
   var recentSkip = skips.filter(function(s){ return new Date(s.date) >= cutoff; });
+  // Expected count is prorated to how much of the 14-day window has actually elapsed
+  // since your first-ever logged session — a fresh install with 4/4 done shouldn't be
+  // told it's "behind" just because it hasn't existed for a full 14 days yet.
+  var allDates = state.sessions.map(function(s){ return new Date(s.date); });
+  var firstDate = allDates.length ? new Date(Math.min.apply(null, allDates)) : new Date();
+  var effectiveStart = firstDate > cutoff ? firstDate : cutoff;
+  var daysElapsed = Math.max(1, Math.ceil((Date.now()-effectiveStart.getTime())/(24*3600*1000)));
+  var expected = Math.round((4/7)*daysElapsed);
   var recentText = "Ai antrenat de "+recentReal.length+" "+(recentReal.length===1?"dată":"ori")
     +(recentSkip.length ? " și ai sărit de "+recentSkip.length+" "+(recentSkip.length===1?"dată":"ori") : "")
-    +". Programul tău are 4 zile pe săptămână, adică ~8 antrenamente în 2 săptămâni."
-    +(recentReal.length < 5 ? " Ești sub ritmul planificat — încearcă să prinzi zilele rămase cât mai curând." : " Ritm solid, continuă așa.");
+    +" în ultimele "+daysElapsed+" zile. Programul tău are 4 zile pe săptămână (~"+expected+" așteptate în acest interval)."
+    +(recentReal.length < expected-1 ? " Ești sub ritmul planificat — încearcă să prinzi zilele rămase cât mai curând." : " Ritm solid, continuă așa.");
   insights.push({type:"info", title:"Consistență, ultimele 14 zile", text: recentText});
 
   var flagged = Object.keys(state.streaks).filter(function(id){ return state.streaks[id] && state.streaks[id].flagged && EXERCISES[id]; });
@@ -1100,8 +1129,8 @@ function analyzeSuggestions(){
       if(!ex || !ex.hasSets || e.substituted) return;
       var filled = e.sets.some(function(st){ return st.weight!=="" && st.reps!==""; });
       if(!filled) return;
-      var vol = e.sets.reduce(function(sum,st){ var w=parseFloat(st.weight), r=parseFloat(st.reps); return sum+(isFinite(w)&&isFinite(r)?w*r:0); },0);
-      (byExercise[exId] = byExercise[exId]||[]).push({date:s.date, vol:vol});
+      // Estimated strength (best set's e1RM), not raw volume — see maxE1RM for why.
+      (byExercise[exId] = byExercise[exId]||[]).push({date:s.date, vol:maxE1RM(e.sets)});
     });
   });
   // Stagnation streak = how many most-recent sessions in a row failed to beat the
@@ -1152,7 +1181,7 @@ function analyzeSuggestions(){
         +"Încearcă ceva punctual: schimbă ordinea în antrenament (fă-l primul, cât ești odihnit), tempo-ul, sau intervalul de repetări.";
     } else {
       title = "Exerciții fără progres recent";
-      text = stagList.map(function(s){ return s.name; }).join(", ")+" nu au mai crescut în volum de "+stagList[0].streak+" antrenamente."
+      text = stagList.map(function(s){ return s.name; }).join(", ")+" nu au mai progresat de "+stagList[0].streak+" antrenamente."
         +(causeText || " Verifică odihna și somnul, sau încearcă un rep în plus data viitoare.");
     }
     insights.push({type:"warn", title:title, text:text});
